@@ -1,0 +1,43 @@
+DUT:
+  -
+    - 10.20.0.27
+    - 80
+    - admin
+    - admin
+  -
+    - 10.20.0.24
+    - 80
+    - admin
+    - admin
+  -
+    - 10.20.0.25
+    - 80
+    - admin
+    - admin
+  -
+    - 10.20.0.14
+    - 80
+    - admin
+    - admin
+  -
+    - 10.20.0.22
+    - 80
+    - admin
+    - admin
+rom_version:
+  - 2.22.3.22.114
+assist_rom_version:
+  - 2.22.4.10.134
+url:
+    -
+      - http://10.3.5.44:8090/.task/daily_upgrade/assist_rom
+      - http://10.3.5.44:8090/.task/daily_upgrade/rom
+    -
+      - https://10.3.5.44:8443/.task/daily_upgrade/assist_rom
+      - https://10.3.5.44:8443/.task/daily_upgrade/rom
+    -
+      - ftp://10.3.5.44:21/.task/daily_upgrade/assist_rom
+      - ftp://10.3.5.44:21/.task/daily_upgrade/rom
+    -
+      - tftp://10.3.5.44:6969/.task/daily_upgrade/assist_rom
+      - tftp://10.3.5.44:6969/.task/daily_upgrade/rom
