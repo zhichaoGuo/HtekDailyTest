@@ -1,5 +1,6 @@
 import re
 import time
+from urllib import parse
 
 import allure
 
@@ -7,12 +8,13 @@ from HtekLib.TestUtils import hl_request
 
 
 class VoipDevice:
-    def __init__(self, ip: str, port: int, user='admin', password='admin'):
+    def __init__(self, ip: str, port: int, http_port=80,user='admin', password='admin'):
         self.ip = ip
         self.port = port
+        self.http_port = http_port
         self.user = user
         self.password = password
-        self.root_url = 'http://%s:%s' % (self.ip, self.port)
+        self.root_url = 'http://%s:%s' % (self.ip, self.http_port)
         self.auth = (self.user, self.password)
         self.page = hl_request('GET', f'{self.root_url}/index.htm', auth=self.auth, timeout=1).text
         self.mac = self._get_mac()
@@ -104,23 +106,61 @@ class VoipDevice:
 
     @allure.step('执行恢复出厂')
     def factory(self):
-        pass
+        # url = self.root_url + '/rsf.htm'
+        url = self.root_url + "/Abyss/FactoryReset"
+        r = hl_request('GET', url, auth=self.auth)
+        if r is False:
+            return False
+        elif r.status_code != 200:
+            return False
+        return True
 
     @allure.step('跳过rom版本检查')
     def skip_rom_check(self):
-        pass
+        url = self.root_url + "/skip_rom_check"
+        r = hl_request('GET', url, auth=self.auth)
+        if r is False:
+            return False
+        elif r.status_code != 200:
+            return False
+        return True
 
     @allure.step('执行ap')
     def auto_provision(self):
-        pass
+        pValues = {
+            "P900000": ''
+        }
+        self.skip_rom_check()
+        url = self.root_url + "/now_auto_provision.htm"
+        headers = {'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8'}
+        data = parse.urlencode(pValues).encode(encoding="utf-8")
+        r = hl_request('POST', url, headers=headers,auth=self.auth,data=data)
+        if r is False:
+            return False
+        elif r.status_code != 200:
+            return False
+        return True
 
     @allure.step('make call')
     def call(self, aim_account):
-        pass
+        url = self.root_url + "/Phone_ActionURL&Command=1&Number=%s&Account=1" % aim_account
+        r = hl_request('GET', url, auth=self.auth)
+        if r is False:
+            return False
+        elif r.status_code != 200:
+            return False
+        return True
 
     @allure.step('执行按键')
     def send_key(self, key_code):
-        pass
+        url = self.root_url + "/Phone_ActionURL&Command=3&key=%s" % key_code
+        headers = {'Connection': 'close'}
+        r = hl_request('GET', url, headers=headers, auth=self.auth)
+        if r is False:
+            return False
+        elif r.status_code != 200:
+            return False
+        return True
 
     @allure.step('设置P值')
     def set_p(self, p_num, p_value):

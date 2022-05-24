@@ -1,7 +1,10 @@
 import re
+import time
 from string import Template
 
-from HtekLib.SipUitls import return_sip_method
+
+from HtekLib.SipUitls import return_sip_method, gen_tag
+from HtekLib.VoipDevice import VoipDevice
 
 buf_100 = Template(
     "SIP/2.0 100 Trying\r\n" +
@@ -54,7 +57,7 @@ buf_200_hold = Template(
     "To: <sip:$server_account@$server_ip:$server_port>;tag=$to_tag\r\n" +
     "From: <sip:$dut_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n" +
     "Call-ID: $call_id\r\n" +
-    "CSeq: $cseq_num $cseq_method\r\n" +
+    "CSeq: $cseq_num INVITE\r\n" +
     "Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REGISTER, SUBSCRIBE, NOTIFY, REFER, INFO, MESSAGE, UPDATE\r\n"
     "Content-Type: $content_type\r\n" +
     "Supported: replaces, timer\r\n" +
@@ -62,14 +65,25 @@ buf_200_hold = Template(
     "Content-Length: $content_len\r\n\r\n" +
     "$body"
 )
+buf_200_register = Template(
+    "SIP/2.0 200 OK\r\n" +
+    "Via: SIP/2.0/UDP $dut_ip:$dut_port;branch=$branch\r\n" +
+    "Contact: <sip:$dut_account@$dut_ip:$dut_port;transport=UDP>;expires=900\r\n" +
+    "To: <sip:$dut_account@$server_ip:$server_port>;tag=$to_tag\r\n" +
+    "From: <sip:$dut_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n" +
+    "Call-ID: $call_id\r\n" +
+    "CSeq: $cseq_num REGISTER\r\n" +
+    "User-Agent: Htek Abyss\r\n" +
+    "Content-Length: 0\r\n\r\n"
+)
 buf_100_resume = Template(
     "SIP/2.0 100 Trying\r\n" +
     "Via: SIP/2.0/UDP $dut_ip:$dut_port;branch=$branch\r\n" +
     "To: <sip:$server_account@$server_ip:$server_port>;tag=$to_tag\r\n" +
     "From: <sip:$dut_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n" +
     "Call-ID: $call_id\r\n" +
-    "CSeq: $cseq_num $cseq_method\r\n" +
-    "Content-Length: $content_len\r\n\r\n"
+    "CSeq: $cseq_num INVITE\r\n" +
+    "Content-Length: 0\r\n\r\n"
 )
 buf_200_resume = Template(
     "SIP/2.0 200 OK\r\n" +
@@ -86,28 +100,50 @@ buf_200_resume = Template(
     "Content-Length: $content_len\r\n\r\n" +
     "$body"
 )
+buf_407 = Template(
+    "SIP/2.0 407 Proxy Authentication Required\r\n" +
+    "Via: SIP/2.0/UDP $dut_ip:$dut_port;branch=$branch\r\n" +
+    'Proxy-Authenticate: Digest nonce="414d535c189d033824:3d732dcb3559ca71bc7daa6e1073df94",algorithm=MD5,realm="3CXPhoneSystem"\r\n' +
+    "To: <sip:$dut_account@$server_ip:$server_port>;tag=$to_tag\r\n" +
+    "From: <sip:$dut_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n" +
+    "Call-ID: $call_id\r\n" +
+    "CSeq: $cseq_num REGISTER\r\n" +
+    "Content-Length: 0\r\n\r\n"
+)
+
 buf_bye = Template(
-    "BYE sip:$server_account@10.3.2.75:5060;transport=UDP SIP/2.0\r\n" +
+    "BYE sip:$dut_account@$dut_ip:$dut_port;transport=UDP SIP/2.0\r\n" +
     "Via: SIP/2.0/UDP $server_ip:$server_port;branch=$branch;rport\r\n" +
     "Max-Forwards: $max_forwards\r\n" +
     "Contact: <sip:$server_account@$server_ip:$server_port>\r\n" +
-    "To: <sip:$dut_account@$server_ip:$server_port>;tag=$to_tag;epid=DP20462d\r\n" +
-    "From: <sip:$server_account@$server_ip:$server_port>;tag=$from_tag\r\n" +
+    "To: <sip:$to_account@$server_ip:$server_port>;tag=$to_tag;epid=DP20462d\r\n" +
+    "From: <sip:$from_account@$server_ip:$server_port>;tag=$from_tag\r\n" +
     "Call-ID: $call_id\r\n" +
     "CSeq: $cseq_num BYE\r\n" +
+    "User-Agent: Htek Abyss\r\n" +
+    "Content-Length: $content_len\r\n\r\n"
+)
+buf_ack = Template(
+    "ACK sip:$dut_account@$server_ip:$server_port SIP/2.0\r\n" +
+    "Via: SIP/2.0/UDP 10.3.2.75:5060;branch=z9hG4bK230970982\r\n" +
+    "From: <sip:1504@192.168.0.68:5060>;tag=3627258a66f4aaf;epid=DP20462d\r\n" +
+    "To: <sip:1503@192.168.0.68:5060>;tag=4032133d\r\n" +
+    "Call-ID: 5d5ba82985cd78e@10.3.2.75\r\n" +
+    "CSeq: 21 ACK\r\n" +
+    "Contact: <sip:1504@10.3.2.75:5060;transport=UDP>\r\n" +
+    "Max-Forwards: 70\r\n" +
     "User-Agent: Htek Abyss\r\n" +
     "Content-Length: $content_len\r\n\r\n"
 )
 
 
 class SipMessage:
-    def __init__(self, buf: bytes, call_type=None):
+    def __init__(self, buf: bytes):
         """
         将sip buf传入解析sip头
         :param buf:
         """
         self.buf = buf
-        self.call_type = call_type
         # 带body
         if buf.find(b'\r\n\r\n') != -1:
             buf_str = str(buf)[2:-1]
@@ -132,6 +168,8 @@ class SipMessage:
                         self.Via = Via(line_value)
                     elif line_method == 'Contact':
                         self.Contact = Contact(line_value)
+                    elif line_method == 'Proxy-Authorization':
+                        self.ProxyAuth = ProxyAuth(line_value)
                     elif line_method == 'Max-Forwards':
                         self.MaxForwards = MaxForwards(line_value)
                     elif line_method == 'To':
@@ -178,7 +216,7 @@ class SipMessage:
         else:
             self.message_type = return_sip_method(self.status_line)
 
-    def build_request(self,method):
+    def build_request(self, method):
         # 使用此方法生成request请求，如INVITE，HOLD,RESUME,BYE，CANCEL，ACK
         if method == 'BYE':
             return buf_bye.substitute()
@@ -207,7 +245,7 @@ class SipMessage:
                                            server_ip=self.To.ip,
                                            server_port=self.To.port,
                                            dut_account=self.From.account,
-                                           to_tag=message.To.tag,
+                                           to_tag=self.To.tag,
                                            from_tag=self.From.tag,
                                            from_epid=self.From.epid,
                                            call_id=self.CallId.callid,
@@ -215,19 +253,19 @@ class SipMessage:
                                            cseq_method=self.CSeq.cseq_method,
                                            content_len='0')
         if method == '180':
-            return buf_180.substitute(dut_ip=message.Via.ip,
-                                      dut_port=message.Via.port,
-                                      branch=message.Via.branch,
-                                      server_account=message.To.account,
-                                      server_ip=message.To.ip,
-                                      server_port=message.To.port,
-                                      dut_account=message.From.account,
-                                      to_tag=message.To.tag,
-                                      from_tag=message.From.tag,
-                                      from_epid=message.From.epid,
-                                      call_id=message.CallId.callid,
-                                      cseq_num=message.CSeq.cseq_num,
-                                      cseq_method=message.CSeq.cseq_method,
+            return buf_180.substitute(dut_ip=self.Via.ip,
+                                      dut_port=self.Via.port,
+                                      branch=self.Via.branch,
+                                      server_account=self.To.account,
+                                      server_ip=self.To.ip,
+                                      server_port=self.To.port,
+                                      dut_account=self.From.account,
+                                      to_tag=self.To.tag,
+                                      from_tag=self.From.tag,
+                                      from_epid=self.From.epid,
+                                      call_id=self.CallId.callid,
+                                      cseq_num=self.CSeq.cseq_num,
+                                      cseq_method=self.CSeq.cseq_method,
                                       content_len='0')
         if method == '200_invite':
             body = "v=0\r\n" \
@@ -272,22 +310,22 @@ class SipMessage:
                    'a=fmtp:120 useinbandfec=1; usedtx=1; maxaveragebitrate=64000\r\n' \
                    'a=rtpmap:101 telephone-event/8000\r\n' \
                    'a=recvonly\r\n'
-            return buf_200_invite.substitute(dut_ip=self.Via.ip,
-                                             dut_port=self.Via.port,
-                                             branch=self.Via.branch,
-                                             server_account=self.To.account,
-                                             server_ip=self.To.ip,
-                                             server_port=self.To.port,
-                                             dut_account=self.From.account,
-                                             to_tag=self.To.tag,
-                                             from_tag=self.From.tag,
-                                             from_epid=self.From.epid,
-                                             call_id=self.CallId.callid,
-                                             cseq_num=self.CSeq.cseq_num,
-                                             cseq_method=self.CSeq.cseq_method,
-                                             content_type=self.ContentType.content_type,
-                                             content_len=len(body),
-                                             body=body)
+            return buf_200_hold.substitute(dut_ip=self.Via.ip,
+                                           dut_port=self.Via.port,
+                                           branch=self.Via.branch,
+                                           server_account=self.To.account,
+                                           server_ip=self.To.ip,
+                                           server_port=self.To.port,
+                                           dut_account=self.From.account,
+                                           to_tag=self.To.tag,
+                                           from_tag=self.From.tag,
+                                           from_epid=self.From.epid,
+                                           call_id=self.CallId.callid,
+                                           cseq_num=self.CSeq.cseq_num,
+                                           cseq_method=self.CSeq.cseq_method,
+                                           content_type=self.ContentType.content_type,
+                                           content_len=len(body),
+                                           body=body)
         if method == '200_resume':
             body = 'v=0\r\n' \
                    f'o=3cxPS 458269655040 527375007746 IN IP4 {self.To.ip}\r\n' \
@@ -316,6 +354,32 @@ class SipMessage:
                                              content_type=self.ContentType.content_type,
                                              content_len=len(body),
                                              body=body)
+        if method == '200_register':
+            return buf_200_register.substitute(dut_ip=self.Via.ip,
+                                               dut_port=self.Via.port,
+                                               branch=self.Via.branch,
+                                               server_account=self.To.account,
+                                               server_ip=self.To.ip,
+                                               server_port=self.To.port,
+                                               dut_account=self.From.account,
+                                               to_tag=self.To.tag,
+                                               from_tag=self.From.tag,
+                                               from_epid=self.From.epid,
+                                               call_id=self.CallId.callid,
+                                               cseq_num=self.CSeq.cseq_num)
+        if method == '407':
+            return buf_407.substitute(dut_ip=self.Via.ip,
+                                      dut_port=self.Via.port,
+                                      branch=self.Via.branch,
+                                      server_account=self.To.account,
+                                      server_ip=self.To.ip,
+                                      server_port=self.To.port,
+                                      dut_account=self.From.account,
+                                      to_tag=gen_tag(),
+                                      from_tag=self.From.tag,
+                                      from_epid=self.From.epid,
+                                      call_id=self.CallId.callid,
+                                      cseq_num=self.CSeq.cseq_num)
 
 
 class SipHeader:
@@ -354,23 +418,44 @@ class Contact(SipHeader):
     def __init__(self, buf):
         super().__init__(buf)
         try:
-            # Contact: <sip:1504@10.3.2.75:5060;transport=UDP>
-            re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+);transport=UDP')
+            # Contact: <sip:1503@10.3.3.116:5069;transport=UDP>;expires=900
+            re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+);transport=UDP>;expires=(?P<expires>.+)')
             self.account = re.search(re_via, self.text.strip(), re.U).groupdict()['account']
             self.ip = re.search(re_via, self.text.strip(), re.U).groupdict()['ip']
             self.port = re.search(re_via, self.text.strip(), re.U).groupdict()['port']
+            self.expires = re.search(re_via, self.text.strip(), re.U).groupdict()['expires']
         except:
             try:
-                # Contact: <sip:1503@192.168.0.68:5060>
-                re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+)>')
+                # Contact: <sip:1504@10.3.2.75:5060;transport=UDP>
+                re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+);transport=UDP')
                 self.account = re.search(re_via, self.text.strip(), re.U).groupdict()['account']
                 self.ip = re.search(re_via, self.text.strip(), re.U).groupdict()['ip']
                 self.port = re.search(re_via, self.text.strip(), re.U).groupdict()['port']
             except:
-                print('Parser Contact ERR!!')
-                self.account = ''
-                self.ip = ''
-                self.port = ''
+                try:
+                    # Contact: <sip:1503@192.168.0.68:5060>
+                    re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+)>')
+                    self.account = re.search(re_via, self.text.strip(), re.U).groupdict()['account']
+                    self.ip = re.search(re_via, self.text.strip(), re.U).groupdict()['ip']
+                    self.port = re.search(re_via, self.text.strip(), re.U).groupdict()['port']
+                except:
+                    print('Parser Contact ERR!!')
+                    self.account = ''
+                    self.ip = ''
+                    self.port = ''
+
+
+class ProxyAuth(SipHeader):
+    def __init__(self, buf):
+        super().__init__(buf)
+        # Proxy-Authorization: Digest username="1505", realm="3CXPhoneSystem",
+        # nonce="414d535c189d033824:3d732dcb3559ca71bc7daa6e1073df94", uri="sip:192.168.0.68:5060",
+        # response="dfaafa509306745676264b275b12e085", algorithm=MD5
+        self.proxyauth = self.text
+        self.proxy_dic = {}
+        for i in buf.split(','):
+            j = (i.strip().split('='))
+            self.proxy_dic[j[0]] = j[1]
 
 
 class MaxForwards(SipHeader):
@@ -548,6 +633,8 @@ class ContentType(SipHeader):
 
 
 if __name__ == '__main__':
-    buf = b'REGISTER sip:1501@10.3.2.242:5066 SIP/2.0\r\nVia: SIP/2.0/UDP 10.20.0.16:5060;branch=z9hG4bK1938747582\r\nFrom: <sip:1500@10.3.2.242>;tag=1571e36d3692605;epid=DP1fa80e\r\nTo: <sip:1501@10.3.2.242:5066>\r\nCall-ID: ab6e010ad2e7cf2@10.20.0.16\r\nCSeq: 20 INVITE\r\nContact: <sip:1500@10.20.0.16:5060;transport=UDP>\r\nMax-Forwards: 70\r\nUser-Agent: Htek UC924U V2.42.6.5.13 001fc11fa80e\r\nSupported: replaces\r\nSubject: SIP Call\r\nExpires: 120\r\nAllow-Events: talk,hold,conference,refer,check-sync\r\nAllow: INVITE, ACK, UPDATE, INFO, CANCEL, BYE, OPTIONS, REFER, SUBSCRIBE, NOTIFY, MESSAGE, PRACK\r\nContent-Type: application/sdp\r\nContent-Length: 423\r\n\r\nv=0\r\no=- 782 781 IN IP4 10.20.0.16\r\ns=SIP Call\r\nc=IN IP4 10.20.0.16\r\nt=0 0\r\nm=audio 12100 RTP/AVP 0 8 9 97 120 102 101\r\na=rtpmap:0 PCMU/8000\r\na=ptime:20\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:9 G722/8000\r\na=rtpmap:97 iLBC/8000\r\na=fmtp:97 mode=20\r\na=rtpmap:120 opus/48000/2\r\na=fmtp:120 useinbandfec=1; usedtx=1; maxaveragebitrate=64000\r\na=rtpmap:102 G726-32/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-11,16\r\na=sendrecv\r\n'
-    message = SipMessage(buf)
-    print(message.build_response('200_resume'))
+    # buf = b'REGISTER sip:1501@10.3.2.242:5066 SIP/2.0\r\nVia: SIP/2.0/UDP 10.20.0.16:5060;branch=z9hG4bK1938747582\r\nFrom: <sip:1500@10.3.2.242>;tag=1571e36d3692605;epid=DP1fa80e\r\nTo: <sip:1501@10.3.2.242:5066>\r\nCall-ID: ab6e010ad2e7cf2@10.20.0.16\r\nCSeq: 20 INVITE\r\nContact: <sip:1500@10.20.0.16:5060;transport=UDP>\r\nMax-Forwards: 70\r\nUser-Agent: Htek UC924U V2.42.6.5.13 001fc11fa80e\r\nSupported: replaces\r\nSubject: SIP Call\r\nExpires: 120\r\nAllow-Events: talk,hold,conference,refer,check-sync\r\nAllow: INVITE, ACK, UPDATE, INFO, CANCEL, BYE, OPTIONS, REFER, SUBSCRIBE, NOTIFY, MESSAGE, PRACK\r\nContent-Type: application/sdp\r\nContent-Length: 423\r\n\r\nv=0\r\no=- 782 781 IN IP4 10.20.0.16\r\ns=SIP Call\r\nc=IN IP4 10.20.0.16\r\nt=0 0\r\nm=audio 12100 RTP/AVP 0 8 9 97 120 102 101\r\na=rtpmap:0 PCMU/8000\r\na=ptime:20\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:9 G722/8000\r\na=rtpmap:97 iLBC/8000\r\na=fmtp:97 mode=20\r\na=rtpmap:120 opus/48000/2\r\na=fmtp:120 useinbandfec=1; usedtx=1; maxaveragebitrate=64000\r\na=rtpmap:102 G726-32/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-11,16\r\na=sendrecv\r\n'
+    # message = SipMessage(buf)
+    # print(message.build_response('200_resume'))
+    from HtekLib.SipServer import Server3cx
+
