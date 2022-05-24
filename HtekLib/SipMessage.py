@@ -1,10 +1,7 @@
 import re
-import time
 from string import Template
 
-
 from HtekLib.SipUitls import return_sip_method, gen_tag
-from HtekLib.VoipDevice import VoipDevice
 
 buf_100 = Template(
     "SIP/2.0 100 Trying\r\n" +
@@ -100,6 +97,16 @@ buf_200_resume = Template(
     "Content-Length: $content_len\r\n\r\n" +
     "$body"
 )
+buf_401 = Template(
+    'SIP/2.0 401 Unauthorized\r\n' +
+    'Via: SIP/2.0/UDP $dut_ip:$dut_port;branch=$branch\r\n' +
+    'To: <sip:$dut_account@$server_ip:$server_port>;tag=$to_tag\r\n' +
+    'From: <sip:$dut_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n' +
+    'Call-ID: $call_id\r\n' +
+    'WWW-Authenticate: Digest realm="$server_ip:$server_port",nonce="0000htekabyss0000000000==",stale=true,algorithn=MD5\r\n' +
+    'CSeq: $cseq_num REGISTER\r\n' +
+    'Content-Length: 0\r\n\r\n'
+)
 buf_407 = Template(
     "SIP/2.0 407 Proxy Authentication Required\r\n" +
     "Via: SIP/2.0/UDP $dut_ip:$dut_port;branch=$branch\r\n" +
@@ -111,29 +118,42 @@ buf_407 = Template(
     "Content-Length: 0\r\n\r\n"
 )
 
-buf_bye = Template(
+buf_bye_incoming = Template(
     "BYE sip:$dut_account@$dut_ip:$dut_port;transport=UDP SIP/2.0\r\n" +
     "Via: SIP/2.0/UDP $server_ip:$server_port;branch=$branch;rport\r\n" +
     "Max-Forwards: $max_forwards\r\n" +
     "Contact: <sip:$server_account@$server_ip:$server_port>\r\n" +
-    "To: <sip:$to_account@$server_ip:$server_port>;tag=$to_tag;epid=DP20462d\r\n" +
-    "From: <sip:$from_account@$server_ip:$server_port>;tag=$from_tag\r\n" +
+    "To: <sip:$dut_account@$server_ip:$server_port>;tag=$to_tag;epid=$to_epid\r\n" +
+    "From: <sip:$server_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n" +
     "Call-ID: $call_id\r\n" +
     "CSeq: $cseq_num BYE\r\n" +
     "User-Agent: Htek Abyss\r\n" +
-    "Content-Length: $content_len\r\n\r\n"
+    "Content-Length: 0\r\n\r\n"
 )
+buf_bye_outgoing = Template(
+    "BYE sip:$dut_account@$dut_ip:$dut_port;transport=UDP SIP/2.0\r\n" +
+    "Via: SIP/2.0/UDP $server_ip:$server_port;branch=$branch;rport\r\n" +
+    "Max-Forwards: $max_forwards\r\n" +
+    "Contact: <sip:$server_account@$server_ip:$server_port>\r\n" +
+    "To: <sip:$to_account@$server_ip:$server_port>;tag=$to_tag\r\n" +
+    "From: <sip:$from_account@$server_ip:$server_port>;tag=$from_tag;epid=$from_epid\r\n" +
+    "Call-ID: $call_id\r\n" +
+    "CSeq: $cseq_num BYE\r\n" +
+    "User-Agent: Htek Abyss\r\n" +
+    "Content-Length: 0\r\n\r\n"
+)
+
 buf_ack = Template(
     "ACK sip:$dut_account@$server_ip:$server_port SIP/2.0\r\n" +
     "Via: SIP/2.0/UDP 10.3.2.75:5060;branch=z9hG4bK230970982\r\n" +
     "From: <sip:1504@192.168.0.68:5060>;tag=3627258a66f4aaf;epid=DP20462d\r\n" +
     "To: <sip:1503@192.168.0.68:5060>;tag=4032133d\r\n" +
     "Call-ID: 5d5ba82985cd78e@10.3.2.75\r\n" +
-    "CSeq: 21 ACK\r\n" +
+    "CSeq: $cseq_num ACK\r\n" +
     "Contact: <sip:1504@10.3.2.75:5060;transport=UDP>\r\n" +
     "Max-Forwards: 70\r\n" +
     "User-Agent: Htek Abyss\r\n" +
-    "Content-Length: $content_len\r\n\r\n"
+    "Content-Length: 0\r\n\r\n"
 )
 
 
@@ -180,6 +200,10 @@ class SipMessage:
                         self.CallId = CallId(line_value)
                     elif line_method == 'CSeq':
                         self.CSeq = CSeq(line_value)
+                    elif line_method == 'Authorization':
+                        self.Authorization = Authorization(line_value)
+                    elif line_method == 'WWW-Authenticate':
+                        self.WWWAuthenticate = WWWAuthenticate(line_value)
                     elif line_method == 'Allow':
                         self.Allow = Allow(line_value)
                     elif line_method == 'Allow-Events':
@@ -216,10 +240,47 @@ class SipMessage:
         else:
             self.message_type = return_sip_method(self.status_line)
 
-    def build_request(self, method):
+    def build_request(self, method, call_type):
         # 使用此方法生成request请求，如INVITE，HOLD,RESUME,BYE，CANCEL，ACK
-        if method == 'BYE':
-            return buf_bye.substitute()
+        # incoming call(DUT call SERVER)
+        if call_type == 0:
+            if method == 'BYE':
+                return buf_bye_incoming.substitute(
+                    dut_account=self.From.account,
+                    dut_ip=self.Via.ip,
+                    dut_port=self.Via.port,
+                    branch=self.Via.branch,
+                    server_account=self.To.account,
+                    server_ip=self.To.ip,
+                    server_port=self.To.port,
+                    max_forwards=self.MaxForwards.maxforwards,
+                    from_tag=self.To.tag,
+                    from_epid='DP123456',
+                    to_tag=self.From.tag,
+                    to_epid=self.From.epid,
+                    call_id=self.CallId.callid,
+                    cseq_num=self.CSeq.cseq_num
+                )
+        # outgoing call(SERVER call DUT)
+        elif call_type == 1:
+            if method == 'BYE':
+                return buf_bye_outgoing.substitute(
+                    dut_account=self.From.account,
+                    dut_ip=self.Via.ip,
+                    dut_port=self.Via.port,
+                    branch=self.Via.branch,
+                    server_account=self.To.account,
+                    server_ip=self.To.ip,
+                    server_port=self.To.port,
+                    max_forwards=self.MaxForwards.maxforwards,
+                    from_account=self.From.account,
+                    from_tag=self.From.tag,
+                    from_epid=self.From.epid,
+                    to_account=self.To.account,
+                    to_tag=self.To.tag,
+                    call_id=self.CallId.callid,
+                    cseq_num=self.CSeq.cseq_num
+                )
 
     def build_response(self, method):
         # 使用此方法生成response回应，如100,180,200
@@ -367,6 +428,18 @@ class SipMessage:
                                                from_epid=self.From.epid,
                                                call_id=self.CallId.callid,
                                                cseq_num=self.CSeq.cseq_num)
+        if method == '401':
+            return buf_401.substitute(dut_ip=self.Via.ip,
+                                      dut_port=self.Via.port,
+                                      branch=self.Via.branch,
+                                      server_ip=self.To.ip,
+                                      server_port=self.To.port,
+                                      dut_account=self.From.account,
+                                      to_tag=gen_tag(),
+                                      from_tag=self.From.tag,
+                                      from_epid=self.From.epid,
+                                      call_id=self.CallId.callid,
+                                      cseq_num=self.CSeq.cseq_num)
         if method == '407':
             return buf_407.substitute(dut_ip=self.Via.ip,
                                       dut_port=self.Via.port,
@@ -468,24 +541,33 @@ class To(SipHeader):
     def __init__(self, buf):
         super().__init__(buf)
         try:
-            # To: <sip:1503@192.168.0.68:5060>
-            re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+)>')
+            # To: <sip:1503@192.168.0.68:5060>;tag=e7719029;epid=DP1fa807
+            re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+)>;tag=(?P<tag>.+);epid=(?P<epid>.+)')
             self.account = re.search(re_via, self.text.strip(), re.U).groupdict()['account']
             self.ip = re.search(re_via, self.text.strip(), re.U).groupdict()['ip']
             self.port = re.search(re_via, self.text.strip(), re.U).groupdict()['port']
+            self.tag = re.search(re_via, self.text.strip(), re.U).groupdict()['tag']
+            self.epid = re.search(re_via, self.text.strip(), re.U).groupdict()['epid']
         except:
             try:
-                # To: <sip:1503@192.168.0.68:5060>;tag=4032133d
-                re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+);tag=(?P<tag>.+)')
+                # To: <sip:1503@192.168.0.68:5060>
+                re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+)>')
                 self.account = re.search(re_via, self.text.strip(), re.U).groupdict()['account']
                 self.ip = re.search(re_via, self.text.strip(), re.U).groupdict()['ip']
                 self.port = re.search(re_via, self.text.strip(), re.U).groupdict()['port']
-                self.tag = re.search(re_via, self.text.strip(), re.U).groupdict()['tag']
             except:
-                print('Parser To ERR!!')
-                self.account = ''
-                self.ip = ''
-                self.port = ''
+                try:
+                    # To: <sip:1503@192.168.0.68:5060>;tag=4032133d
+                    re_via = (r'<sip:(?P<account>.+)@(?P<ip>.+):(?P<port>.+);tag=(?P<tag>.+)')
+                    self.account = re.search(re_via, self.text.strip(), re.U).groupdict()['account']
+                    self.ip = re.search(re_via, self.text.strip(), re.U).groupdict()['ip']
+                    self.port = re.search(re_via, self.text.strip(), re.U).groupdict()['port']
+                    self.tag = re.search(re_via, self.text.strip(), re.U).groupdict()['tag']
+                except:
+                    print('Parser To ERR!!')
+                    self.account = ''
+                    self.ip = ''
+                    self.port = ''
         self.tag = 'htek20180905'
 
 
@@ -563,6 +645,37 @@ class Allow(SipHeader):
             self.allow_list = ''
 
 
+class Authorization(SipHeader):
+    def __init__(self, buf):
+        super().__init__(buf)
+        try:
+            # Authorization: Digest username="1505", realm="10.3.3.49:5061", nonce="0000htekabyss0000000000==", uri="sip:10.3.3.49:5061", response="860d7f1f0330406cbab256c5be322f48", algorithm=MD5
+            self.authorization = self.text
+            self.auth_dic = {}
+            for i in buf.split(','):
+                j = (i.strip().split('='))
+                self.auth_dic[j[0]] = j[1]
+        except Exception as err:
+            print('Parser Authorization ERR!!:%s'% err)
+            self.authorization = ''
+            self.auth_dic = ''
+
+
+class WWWAuthenticate(SipHeader):
+    def __init__(self, buf):
+        super().__init__(buf)
+        try:
+            # WWW-Authenticate: Digest realm="10.3.3.49:5061",nonce="0000htekabyss0000000000==",stale=true,algorithn=MD5
+            self.authenticate = self.text
+            self.auth_dic = {}
+            for i in buf.split(','):
+                j = (i.strip().split('='))
+                self.auth_dic[j[0]] = j[1]
+        except:
+            self.authenticate = self.text
+            self.auth_dic = {}
+
+
 class AllowEvents(SipHeader):
     def __init__(self, buf):
         super().__init__(buf)
@@ -638,3 +751,10 @@ if __name__ == '__main__':
     # print(message.build_response('200_resume'))
     from HtekLib.SipServer import Server3cx
 
+    buf =  'Authorization: Digest username="1505", realm="10.3.3.49:5061", nonce="0000htekabyss0000000000==", uri="sip:10.3.3.49:5061", response="860d7f1f0330406cbab256c5be322f48", algorithm=MD5'
+
+    auth_dic = {}
+    for i in buf.split(','):
+        j = (i.strip().split('='))
+        auth_dic[j[0]] = j[1]
+    print(auth_dic)

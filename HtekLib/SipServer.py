@@ -25,25 +25,22 @@ class SipServer:
         self.rev_message_que = queue.Queue()
 
     def start(self):
-        print('0')
         thread = Thread(target=self.select_thread)
-        print('1')
         # 设置成守护线程
         thread.setDaemon(True)
-        print('2')
         # 启动线程
         thread.start()
-        print('hh')
         return True
 
     def stop(self):
         pass
 
-    def make_call(self, dut_account, call_type=1):
+    def make_call(self, dut_account):
+        buf = b''
+        message = SipMessage(buf)
+        return SipCall(message, self, 1)
 
-        return SipCall()
-
-    def receive_call(self, call_type=0):
+    def receive_call(self):
         return self.rev_message('INVITE')
 
     def rev_message(self, method, time_out=5):
@@ -62,7 +59,7 @@ class SipServer:
                 if (int(time.time()) - time_flag) > time_out:
                     assert False
         if method == 'INVITE':
-            return SipCall(message, self)
+            return SipCall(message, self, 0)
         else:
             return message
 
@@ -71,48 +68,7 @@ class SipServer:
         print('***发送消息：%s' % sip_msg)
 
     def select_thread(self):
-        s_input = [self.socket, ]
-        s_output = []
-        while True:
-            readable, writeable, exeptional = select.select(s_input, s_output, s_input)
-            # 读取数据
-            for s in readable:  # 每个s就是一个socket
-                if s is self.socket:
-                    # 接受信息,判断模式，如果为空就放弃，否则解析消息
-                    buf, (dut_ip, dut_port) = s.recvfrom(1500)
-                    # 如果不是目标设备，跳过此包
-                    if (dut_ip != self.dut_ip) | (dut_port != self.dut_port):
-                        break
-                    print('++++ rev %s message from %s:%s' % (buf, dut_ip, dut_port))
-                    # 粗解包，使目标包进入流程，其他包舍弃
-                    method = return_sip_method(buf)  # 这里的method 可能是\r\n\r\n 空消息
-                    if method == '\\r\\n\\r\\n':
-                        pass
-                    elif method == 'REGISTER':
-                        message = SipMessage(buf)
-                        if hasattr(message,'ProxyAuth') is False:
-                            self.send_str('407')
-                        else:
-                            self.rev_message_que.put(message)
-                            print('+++放入队列：%s' % method)
-                            self.send_str('200_register')
-
-                    elif method in ['INVITE', '100', '180', '200', '486', 'BYE', '302', 'ACK', 'REFER', 'CANCEL']:
-                        message = SipMessage(buf)
-                        self.rev_message_que.put(message)
-                        print('+++放入队列：%s' % method)
-                        if (method == 'INVITE') & (is_hold(buf) == False) & (is_resume(buf) == False):
-                            self.send_str(message.build_response('100'))
-                            self.send_str(message.build_response('180'))
-                        elif (method == 'INVITE') & (is_hold(buf) == True):
-                            self.send_str(message.build_response('200_hold'))
-                        elif (method == 'INVITE') & (is_resume(buf) == True):
-                            self.send_str(message.build_response('200_resume'))
-                        elif method == 'BYE':
-                            self.send_str(message.build_response('200_bye'))
-                        elif (method == '200') & message.CSeq.cseq_method == 'INVITE':
-                            self.send_str(message.build_response('200_invite'))
-
+       pass
 
 class Server3cx(SipServer):
     def select_thread(self):
@@ -135,8 +91,8 @@ class Server3cx(SipServer):
                         pass
                     elif method == 'REGISTER':
                         message = SipMessage(buf)
-                        if hasattr(message, 'ProxyAuth') is False:
-                            self.send_str(message.build_response('407'))
+                        if hasattr(message, 'Authorization') is False:
+                            self.send_str(message.build_response('401'))
                         else:
                             self.rev_message_que.put(message)
                             print('+++放入队列：%s' % method)
@@ -155,7 +111,5 @@ class Server3cx(SipServer):
                             self.send_str(message.build_response('200_resume'))
                         elif method == 'BYE':
                             self.send_str(message.build_response('200_bye'))
-                        elif (method == '200') & message.CSeq.cseq_method == 'INVITE':
+                        elif (method == '200') & (message.CSeq.cseq_method == 'INVITE'):
                             self.send_str(message.build_response('200_invite'))
-
-

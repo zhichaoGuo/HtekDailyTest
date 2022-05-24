@@ -5,7 +5,7 @@ import requests
 def hl_request(method, url, retry=0, **kwargs):
     time.sleep(0.5)
     if retry == 3:
-        return False
+        assert False
     try:
         print('[%d] send %s request to %s' % (retry, method, url))
         req = requests.request(method, url, **kwargs)
